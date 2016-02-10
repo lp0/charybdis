@@ -1347,7 +1347,7 @@ conf_end_connect(struct TopConf *tc)
 #endif
 
 	add_server_conf(yy_server);
-	rb_dlinkAdd(yy_server, &yy_server->node, &server_conf_list);
+	rb_dlinkAddTail(yy_server, &yy_server->node, &server_conf_list);
 
 	yy_server = NULL;
 	return 0;

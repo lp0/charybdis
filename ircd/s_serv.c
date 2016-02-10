@@ -53,6 +53,8 @@
 #include "capability.h"
 #include "s_assert.h"
 
+#define MIN_CONN_FREQ 300
+
 int MaxConnectionCount = 1;
 int MaxClientCount = 1;
 int refresh_user_links = 0;
@@ -257,9 +259,35 @@ try_connections(void *unused)
 	struct server_conf *tmp_p;
 	struct Class *cltmp;
 	rb_dlink_node *ptr;
-	bool connecting = false;
 	int confrq = 0;
-	time_t next = 0;
+	int count = 0;
+
+	/* TODO: change this to set active flag to 0 when added to event! --Habeeb */
+	if(GlobalSetOptions.autoconn == 0)
+		return;
+
+	RB_DLINK_FOREACH(ptr, server_conf_list.head)
+	{
+		tmp_p = ptr->data;
+
+		if(ServerConfIllegal(tmp_p) || !ServerConfAutoconn(tmp_p))
+			continue;
+
+		/* don't allow ssl connections if ssl isn't setup */
+		if(ServerConfSSL(tmp_p) && (!ircd_ssl_ok || !get_ssld_count()))
+			continue;
+
+		cltmp = tmp_p->class;
+
+		/*
+		 * Found a CONNECT config with port specified, scan clients
+		 * and see if this server is already connected?
+		 */
+		client_p = find_server(NULL, tmp_p->name);
+
+		if(!client_p && (CurrUsers(cltmp) < MaxUsers(cltmp)))
+			count++;
+	}
 
 	RB_DLINK_FOREACH(ptr, server_conf_list.head)
 	{
@@ -282,14 +310,7 @@ try_connections(void *unused)
 		 * a bit fuzzy... -- msa >;) ]
 		 */
 		if(tmp_p->hold > rb_current_time())
-		{
-			if(next > tmp_p->hold || next == 0)
-				next = tmp_p->hold;
 			continue;
-		}
-
-		confrq = get_con_freq(cltmp);
-		tmp_p->hold = rb_current_time() + confrq;
 
 		/*
 		 * Found a CONNECT config with port specified, scan clients
@@ -297,28 +318,22 @@ try_connections(void *unused)
 		 */
 		client_p = find_server(NULL, tmp_p->name);
 
-		if(!client_p && (CurrUsers(cltmp) < MaxUsers(cltmp)) && !connecting)
+		if(!client_p && (CurrUsers(cltmp) < MaxUsers(cltmp)))
 		{
 			server_p = tmp_p;
 
-			/* We connect only one at time... */
-			connecting = true;
-		}
+			if((confrq = get_con_freq(cltmp)) < (count * TRY_CONNECTIONS_TIME + MIN_CONN_FREQ))
+				confrq = (count * TRY_CONNECTIONS_TIME + MIN_CONN_FREQ);
 
-		if((next > tmp_p->hold) || (next == 0))
-			next = tmp_p->hold;
+			tmp_p->hold = rb_current_time() + confrq;
+
+			/* We connect only one at time... */
+			break;
+		}
 	}
 
-	/* TODO: change this to set active flag to 0 when added to event! --Habeeb */
-	if(GlobalSetOptions.autoconn == 0)
+	if(!server_p)
 		return;
-
-	if(!connecting)
-		return;
-
-	/* move this connect entry to end.. */
-	rb_dlinkDelete(&server_p->node, &server_conf_list);
-	rb_dlinkAddTail(server_p, &server_p->node, &server_conf_list);
 
 	/*
 	 * We used to only print this if serv_connect() actually
@@ -330,7 +345,7 @@ try_connections(void *unused)
 	 *   -- adrian
 	 */
 	sendto_realops_snomask(SNO_GENERAL, L_ALL,
-			"Connection to %s activated",
+			"Attempting to connect to %s",
 			server_p->name);
 
 	serv_connect(server_p, 0);
