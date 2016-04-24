@@ -266,6 +266,18 @@ try_connections(void *unused)
 	if(GlobalSetOptions.autoconn == 0)
 		return;
 
+	RB_DLINK_FOREACH(ptr, global_serv_list.head)
+	{
+		client_p = ptr->data;
+
+		if(IsMe(client_p))
+			continue;
+
+		/* don't autoconnect if another server on the network has a lower id */
+		if(has_id(client_p) && strcmp(client_p->id, me.id) < 0)
+			return;
+	}
+
 	RB_DLINK_FOREACH(ptr, server_conf_list.head)
 	{
 		tmp_p = ptr->data;
