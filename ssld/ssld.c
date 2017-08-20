@@ -570,10 +570,12 @@ conn_mod_read_cb(rb_fde_t *fd, void *data)
 
 	while(1)
 	{
+		int msg_flags = 0;
+
 		if(IsDead(conn))
 			return;
 
-		length = rb_read(conn->mod_fd, inbuf, sizeof(inbuf));
+		length = rb_readx(conn->mod_fd, inbuf, sizeof(inbuf), &msg_flags);
 
 		if(length == 0 || (length < 0 && !rb_ignore_errno(errno)))
 		{
@@ -604,6 +606,26 @@ conn_mod_read_cb(rb_fde_t *fd, void *data)
 			conn_plain_write_sendq(conn->plain_fd, conn);
 			return;
 		}
+
+		if (msg_flags != 0) {
+#ifdef HAVE_LIBSCTP
+			if (msg_flags & RB_READX_SCTP_NOTIFICATION) {
+				uint8_t buf[256];
+
+				buf[0] = 'P';
+				uint32_to_buf(&buf[1], conn->id);
+
+				if (length > sizeof(buf) - 5)
+					length = sizeof(buf) - 5;
+
+				memcpy(&buf[5], inbuf, length);
+
+				mod_cmd_write_queue(conn->ctl, buf, 5 + length);
+			}
+#endif
+			continue;
+		}
+
 		conn->mod_in += length;
 #ifdef HAVE_LIBZ
 		if(IsZip(conn))
@@ -768,11 +790,17 @@ ssl_process_accept(mod_ctl_t * ctl, mod_ctl_buf_t * ctlb)
 	conn_add_id_hash(conn, id);
 	SetSSL(conn);
 
-	if(rb_get_type(conn->mod_fd) & RB_FD_UNKNOWN)
+	if(rb_get_type(conn->mod_fd) == RB_FD_UNKNOWN)
 		rb_set_type(conn->mod_fd, RB_FD_SOCKET);
 
 	if(rb_get_type(conn->plain_fd) == RB_FD_UNKNOWN)
 		rb_set_type(conn->plain_fd, RB_FD_SOCKET);
+
+	if (ctlb->buflen == 9) {
+		uint32_t type = buf_to_uint32(&ctlb->buf[5]);
+
+		rb_set_type(conn->mod_fd, rb_get_type(conn->mod_fd) | (type & RB_FD_INHERIT_TYPES));
+	}
 
 	rb_ssl_start_accepted(ctlb->F[0], ssl_process_accept_cb, conn, 10);
 }
@@ -800,6 +828,11 @@ ssl_process_connect(mod_ctl_t * ctl, mod_ctl_buf_t * ctlb)
 	if(rb_get_type(conn->plain_fd) == RB_FD_UNKNOWN)
 		rb_set_type(conn->plain_fd, RB_FD_SOCKET);
 
+	if (ctlb->buflen == 9) {
+		uint32_t type = buf_to_uint32(&ctlb->buf[5]);
+
+		rb_set_type(conn->mod_fd, rb_get_type(conn->mod_fd) | (type & RB_FD_INHERIT_TYPES));
+	}
 
 	rb_ssl_start_connected(ctlb->F[0], ssl_process_connect_cb, conn, 10);
 }
@@ -982,7 +1015,7 @@ mod_process_cmd_recv(mod_ctl_t * ctl)
 		{
 		case 'A':
 			{
-				if (ctl_buf->nfds != 2 || ctl_buf->buflen != 5)
+				if (ctl_buf->nfds != 2 || (ctl_buf->buflen != 5 && ctl_buf->buflen != 9))
 				{
 					cleanup_bad_message(ctl, ctl_buf);
 					break;
@@ -998,7 +1031,7 @@ mod_process_cmd_recv(mod_ctl_t * ctl)
 			}
 		case 'C':
 			{
-				if (ctl_buf->buflen != 5)
+				if (ctl_buf->buflen != 5 && ctl_buf->buflen != 9)
 				{
 					cleanup_bad_message(ctl, ctl_buf);
 					break;

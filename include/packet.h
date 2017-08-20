@@ -29,4 +29,8 @@ extern PF read_packet;
 extern EVH flood_recalc;
 extern void flood_endgrace(struct Client *);
 
+#ifdef HAVE_LIBSCTP
+extern void read_sctp_notification(struct Client *client_p, union sctp_notification *notif);
+#endif
+
 #endif /* INCLUDED_packet_h */

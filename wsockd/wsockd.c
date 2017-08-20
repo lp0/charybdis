@@ -852,11 +852,17 @@ wsock_process(mod_ctl_t * ctl, mod_ctl_buf_t * ctlb)
 	conn_add_id_hash(conn, id);
 	SetWS(conn);
 
-	if(rb_get_type(conn->mod_fd) & RB_FD_UNKNOWN)
+	if(rb_get_type(conn->mod_fd) == RB_FD_UNKNOWN)
 		rb_set_type(conn->mod_fd, RB_FD_SOCKET);
 
 	if(rb_get_type(conn->plain_fd) == RB_FD_UNKNOWN)
 		rb_set_type(conn->plain_fd, RB_FD_SOCKET);
+
+	if (ctlb->buflen == 9) {
+		uint32_t type = buf_to_uint32(&ctlb->buf[5]);
+
+		rb_set_type(conn->mod_fd, rb_get_type(conn->mod_fd) | (type & RB_FD_INHERIT_TYPES));
+	}
 
 	conn_mod_read_cb(conn->mod_fd, conn);
 	conn_plain_read_cb(conn->plain_fd, conn);
@@ -876,7 +882,7 @@ mod_process_cmd_recv(mod_ctl_t * ctl)
 		{
 		case 'A':
 			{
-				if (ctl_buf->nfds != 2 || ctl_buf->buflen != 5)
+				if (ctl_buf->nfds != 2 || (ctl_buf->buflen != 5 && ctl_buf->buflen != 9))
 				{
 					cleanup_bad_message(ctl, ctl_buf);
 					break;

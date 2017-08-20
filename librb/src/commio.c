@@ -366,6 +366,7 @@ rb_setsockopt_sctp(rb_fde_t *F)
 	struct sctp_rtoinfo rtoinfo;
 	struct sctp_paddrparams paddrparams;
 	struct sctp_assocparams assocparams;
+	struct sctp_event_subscribe events;
 
 	ret = setsockopt(F->fd, SOL_SCTP, SCTP_NODELAY, &opt_one, sizeof(opt_one));
 	if (ret) {
@@ -435,6 +436,16 @@ rb_setsockopt_sctp(rb_fde_t *F)
 	ret = setsockopt(F->fd, SOL_SCTP, SCTP_ASSOCINFO, &assocparams, sizeof(assocparams));
 	if (ret) {
 		rb_lib_log("rb_setsockopt_sctp: Cannot set SCTP_ASSOCINFO for fd %d: %s",
+				F->fd, strerror(rb_get_sockerr(F)));
+		return ret;
+	}
+
+	/* Subscribe to events to get peer address change notifications */
+	memset(&events, 0, sizeof(events));
+	events.sctp_address_event = 1;
+	ret = setsockopt(F->fd, SOL_SCTP, SCTP_EVENTS, &events, sizeof(events));
+	if (ret) {
+		rb_lib_log("rb_setsockopt_sctp: Cannot set SCTP_EVENTS for fd %d: %s",
 				F->fd, strerror(rb_get_sockerr(F)));
 		return ret;
 	}
@@ -1154,9 +1165,44 @@ rb_get_fde(rb_platform_fd_t fd)
 ssize_t
 rb_read(rb_fde_t *F, void *buf, int count)
 {
+	return rb_readx(F, buf, count, NULL);
+}
+
+inline ssize_t
+rb_readx(rb_fde_t *F, void *buf, int count, int *msg_flags)
+{
 	ssize_t ret;
+
+	if (msg_flags != NULL)
+		*msg_flags = 0;
+
 	if(F == NULL)
 		return 0;
+
+#ifdef HAVE_LIBSCTP
+	if (F->type & RB_FD_SCTP) {
+		int rb_msg_flags;
+
+		/* skip notifications if the caller doesn't support them */
+		do {
+			rb_msg_flags = 0;
+
+			ret = sctp_recvmsg(F->fd, buf, count, NULL, NULL, NULL, &rb_msg_flags);
+			if (ret < 0) {
+				rb_get_errno();
+				break;
+			}
+
+			if (rb_msg_flags & MSG_NOTIFICATION) {
+				if (msg_flags != NULL) {
+					*msg_flags |= RB_READX_SCTP_NOTIFICATION;
+					break;
+				}
+			}
+		} while ((rb_msg_flags & ~MSG_EOR) != 0);
+		return ret;
+	}
+#endif
 
 	/* This needs to be *before* RB_FD_SOCKET otherwise you'll process
 	 * an SSL socket as a regular socket
@@ -1167,6 +1213,7 @@ rb_read(rb_fde_t *F, void *buf, int count)
 		return rb_ssl_read(F, buf, count);
 	}
 #endif
+
 	if(F->type & RB_FD_SOCKET)
 	{
 		ret = recv(F->fd, buf, count, 0);

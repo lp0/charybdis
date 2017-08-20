@@ -409,6 +409,33 @@ ssl_process_open_fd(ssl_ctl_t * ctl, ssl_ctl_buf_t * ctl_buf)
 	}
 }
 
+#ifdef HAVE_LIBSCTP
+static void
+ssl_process_sctp_notification_fd(ssl_ctl_t * ctl, ssl_ctl_buf_t * ctl_buf)
+{
+	struct Client *client_p;
+	uint32_t fd;
+	union sctp_notification notif;
+	int length;
+
+	if (ctl_buf->buflen < 5)
+		return; /* bogus message..drop it.. XXX should warn here */
+
+	fd = buf_to_uint32(&ctl_buf->buf[1]);
+	client_p = find_cli_connid_hash(fd);
+	if (client_p == NULL || client_p->localClient == NULL)
+		return;
+
+	memset(&notif, 0, sizeof(notif));
+	length = ctl_buf->buflen - 5;
+	if (length > sizeof(notif))
+		length = sizeof(notif);
+	memcpy(&notif, &ctl_buf->buf[5], length);
+
+	read_sctp_notification(client_p, &notif);
+}
+#endif
+
 static void
 ssl_process_dead_fd(ssl_ctl_t * ctl, ssl_ctl_buf_t * ctl_buf)
 {
@@ -557,6 +584,11 @@ ssl_process_cmd_recv(ssl_ctl_t * ctl)
 			break;
 		case 'O':
 			ssl_process_open_fd(ctl, ctl_buf);
+			break;
+		case 'P':
+#ifdef HAVE_LIBSCTP
+			ssl_process_sctp_notification_fd(ctl, ctl_buf);
+#endif
 			break;
 		case 'D':
 			ssl_process_dead_fd(ctl, ctl_buf);
@@ -801,12 +833,14 @@ start_ssld_accept(rb_fde_t * sslF, rb_fde_t * plainF, uint32_t id)
 {
 	rb_fde_t *F[2];
 	ssl_ctl_t *ctl;
-	char buf[5];
+	char buf[9];
 	F[0] = sslF;
 	F[1] = plainF;
 
 	buf[0] = 'A';
 	uint32_to_buf(&buf[1], id);
+	uint32_to_buf(&buf[5], rb_get_type(sslF));
+
 	ctl = which_ssld();
 	if(!ctl)
 		return NULL;
@@ -820,12 +854,13 @@ start_ssld_connect(rb_fde_t * sslF, rb_fde_t * plainF, uint32_t id)
 {
 	rb_fde_t *F[2];
 	ssl_ctl_t *ctl;
-	char buf[5];
+	char buf[9];
 	F[0] = sslF;
 	F[1] = plainF;
 
 	buf[0] = 'C';
 	uint32_to_buf(&buf[1], id);
+	uint32_to_buf(&buf[5], rb_get_type(sslF));
 
 	ctl = which_ssld();
 	if(!ctl)

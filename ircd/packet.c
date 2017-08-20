@@ -224,6 +224,61 @@ flood_recalc(void *unused)
 	}
 }
 
+#ifdef HAVE_LIBSCTP
+void
+read_sctp_notification(struct Client *client_p, union sctp_notification *notif)
+{
+	if (notif->sn_header.sn_type == SCTP_PEER_ADDR_CHANGE) {
+		struct sctp_paddr_change *event = &notif->sn_paddr_change;
+		char address[HOSTLEN + 1];
+
+		if (rb_inet_ntop_sock((struct sockaddr *)&event->spc_aaddr, address, sizeof(address)) == NULL)
+			return;
+
+		switch (event->spc_state) {
+		case SCTP_ADDR_CONFIRMED:
+			if (!IsServer(client_p)) {
+				sendto_one_notice(client_p, ":*** SCTP address confirmed: %s", address);
+			}
+			break;
+
+		case SCTP_ADDR_AVAILABLE:
+			if (!IsServer(client_p)) {
+				sendto_one_notice(client_p, ":*** SCTP address available: %s", address);
+			}
+			break;
+
+		case SCTP_ADDR_UNREACHABLE:
+			if (!IsServer(client_p)) {
+				sendto_one_notice(client_p, ":*** SCTP address unreachable: %s", address);
+			}
+			break;
+
+		case SCTP_ADDR_ADDED:
+			if (!IsServer(client_p)) {
+				sendto_one_notice(client_p, ":*** SCTP address added: %s", address);
+			}
+			break;
+
+		case SCTP_ADDR_REMOVED:
+			if (!IsServer(client_p)) {
+				sendto_one_notice(client_p, ":*** SCTP address removed: %s", address);
+			}
+			break;
+
+		case SCTP_ADDR_MADE_PRIM:
+			if (!IsServer(client_p)) {
+				sendto_one_notice(client_p, ":*** SCTP address made primary: %s", address);
+			}
+			break;
+
+		default:
+			break;
+		}
+	}
+}
+#endif
+
 /*
  * read_packet - Read a 'packet' of data from a connection and process it.
  */
@@ -236,6 +291,8 @@ read_packet(rb_fde_t * F, void *data)
 
 	while(1)
 	{
+		int msg_flags = 0;
+
 		if(IsAnyDead(client_p))
 			return;
 
@@ -244,7 +301,7 @@ read_packet(rb_fde_t * F, void *data)
 		 * I personally think it makes the code too hairy to make sane.
 		 *     -- adrian
 		 */
-		length = rb_read(client_p->localClient->F, readBuf, READBUF_SIZE);
+		length = rb_readx(client_p->localClient->F, readBuf, READBUF_SIZE, &msg_flags);
 
 		if(length < 0)
 		{
@@ -259,6 +316,15 @@ read_packet(rb_fde_t * F, void *data)
 		{
 			error_exit_client(client_p, length);
 			return;
+		}
+
+		if (msg_flags != 0) {
+#ifdef HAVE_LIBSCTP
+			if (msg_flags & RB_READX_SCTP_NOTIFICATION) {
+				read_sctp_notification(client_p, (union sctp_notification *)readBuf);
+			}
+#endif
+			continue;
 		}
 
 		if(client_p->localClient->lasttime < rb_current_time())

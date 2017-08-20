@@ -516,12 +516,14 @@ start_wsockd_accept(rb_fde_t * sslF, rb_fde_t * plainF, uint32_t id)
 {
 	rb_fde_t *F[2];
 	ws_ctl_t *ctl;
-	char buf[5];
+	char buf[9];
 	F[0] = sslF;
 	F[1] = plainF;
 
 	buf[0] = 'A';
 	uint32_to_buf(&buf[1], id);
+	uint32_to_buf(&buf[5], rb_get_type(sslF));
+
 	ctl = which_wsockd();
 	if(!ctl)
 		return NULL;

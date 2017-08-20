@@ -117,6 +117,9 @@ void rb_note(rb_fde_t *, const char *);
 #define RB_SSL_CERTFP_LEN_SHA256	32
 #define RB_SSL_CERTFP_LEN_SHA512	64
 
+/* readx msg_flags */
+#define RB_READX_SCTP_NOTIFICATION	0x1
+
 int rb_set_nb(rb_fde_t *);
 int rb_set_buffers(rb_fde_t *, int);
 
@@ -142,6 +145,7 @@ ssize_t rb_write(rb_fde_t *, const void *buf, int count);
 ssize_t rb_writev(rb_fde_t *, struct rb_iovec *vector, int count);
 
 ssize_t rb_read(rb_fde_t *, void *buf, int count);
+ssize_t rb_readx(rb_fde_t *, void *buf, int count, int *msg_flags);
 int rb_pipe(rb_fde_t **, rb_fde_t **, const char *desc);
 
 int rb_setup_ssl_server(const char *cert, const char *keyfile, const char *dhfile, const char *cipher_list);
